@@ -127,8 +127,8 @@ void server(int listenfd, int udp_cli_fd) {
 
                     // Disable Nagle's algorithm for low latency
                     int enable = 1;
-                    setsockopt(tcp_cli_fd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
-                    DIE(tcp_cli_fd < 0, "setsockopt TCP_NODELAY failed");
+                    int result = setsockopt(tcp_cli_fd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+                    DIE(result < 0, "setsockopt TCP_NODELAY failed");
 
                     // Store client IP and port for identification
                     ips_ports[tcp_cli_fd] = std::make_pair(tcp_cli_addr.sin_addr,
@@ -239,9 +239,22 @@ void server(int listenfd, int udp_cli_fd) {
                     // Handle "exit" command
                     if (argc == 1 && strcmp(argv[0], "exit") == 0) {
                         // Close all client sockets and the listening/UDP sockets
+                        for (auto const& [id, client_ptr] : ids) {
+                            if (client_ptr->connected) {
+                                tcp_request_t shutdown_notice;
+                                memset(&shutdown_notice, 0, sizeof(shutdown_notice));
+                                strcpy(shutdown_notice.id, "SERVER");
+                                shutdown_notice.type = SERVER_SHUTDOWN;
+                                send_all(client_ptr->fd, &shutdown_notice, sizeof(shutdown_notice));
+                            }
+                        }
+                        
+                        // Apoi așteaptă puțin timp pentru ca mesajele să ajungă
+                        usleep(100000);  // 100ms
+                        
+                        // Apoi închide socket-urile ca înainte
                         for (const auto &p : poll_fds) {
-                            if (p.fd != STDIN_FILENO) { // Don't close stdin
-                                // Optionally send a disconnect message to clients
+                            if (p.fd != STDIN_FILENO) {
                                 close(p.fd);
                             }
                         }
@@ -488,6 +501,14 @@ int main(int argc, char* argv[]) {
     int udp_cli_fd = socket(AF_INET, SOCK_DGRAM, 0);
     DIE(udp_cli_fd < 0, "socket() failed");
 
+    // Set socket options to allow address reuse for both sockets
+    int enable = 1;
+    rc = setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+    DIE(rc < 0, "setsockopt(SO_REUSEADDR) failed for TCP");
+    
+    rc = setsockopt(udp_cli_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+    DIE(rc < 0, "setsockopt(SO_REUSEADDR) failed for UDP");
+
     struct sockaddr_in serv_addr;
     socklen_t socket_len = sizeof(struct sockaddr_in);
 
@@ -502,11 +523,12 @@ int main(int argc, char* argv[]) {
     rc = bind(udp_cli_fd, (const struct sockaddr*)&serv_addr, sizeof(serv_addr));
     DIE(rc < 0, "bind() failed");
 
-    listen(listenfd, MAX_CONNECTIONS);
+    rc = listen(listenfd, SOMAXCONN);
+    DIE(rc < 0, "listen() failed");
 
     server(listenfd, udp_cli_fd);
 
     close(listenfd);
-
+    close(udp_cli_fd);
     return 0;
 }

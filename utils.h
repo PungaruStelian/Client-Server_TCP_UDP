@@ -7,9 +7,6 @@
 
 #include <bits/stdc++.h>
 
-#define MAX_PFDS 32
-#define MAX_CONNECTIONS 512
-
 #define DIE(assertion, call_description)                                       \
     do {                                                                       \
         if (assertion) {                                                       \

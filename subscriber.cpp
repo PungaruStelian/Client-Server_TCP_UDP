@@ -29,18 +29,25 @@ void subscriber(int sockfd, char *id)
     connect.type = CONNECT;
     send_all(sockfd, &connect, sizeof(connect));
 
-    struct pollfd pfds[MAX_PFDS];
-    int nfds = 0;
+    // Initial capacity for pfds array
+    size_t pfds_capacity = 2; // Start with minimal capacity since we only need 2 initially
+    size_t pfds_size = 0;
+
+    // Dynamically allocate the array
+    struct pollfd *pfds = (struct pollfd *)malloc(pfds_capacity * sizeof(struct pollfd));
+    DIE(pfds == NULL, "malloc failed for pfds");
 
     /* stdin fd entry */
-    pfds[nfds].fd = STDIN_FILENO;
-    pfds[nfds].events = POLLIN;
-    ++nfds;
+    pfds[pfds_size].fd = STDIN_FILENO;
+    pfds[pfds_size].events = POLLIN;
+    pfds[pfds_size].revents = 0;
+    ++pfds_size;
 
     /* server socket fd entry */
-    pfds[nfds].fd = sockfd;
-    pfds[nfds].events = POLLIN;
-    ++nfds;
+    pfds[pfds_size].fd = sockfd;
+    pfds[pfds_size].events = POLLIN;
+    pfds[pfds_size].revents = 0;
+    ++pfds_size;
 
     char buf[MSG_MAXSIZE + 1];
     memset(buf, 0, MSG_MAXSIZE + 1);
@@ -48,22 +55,58 @@ void subscriber(int sockfd, char *id)
     while (1)
     {
         /* Wait for data on at least one fd */
-        poll(pfds, nfds, -1);
+        poll(pfds, pfds_size, -1);
 
+        /* The server response */
         /* The server response */
         if (pfds[1].revents & POLLIN)
         {
+            // Try to read message length first (UDP messages have length prefix)
             int len;
-            char buff[2 * MSG_MAXSIZE];
-
-            int rc = recv_all(sockfd, &len, sizeof(len));
-            if (!rc)
+            int rc = recv(sockfd, &len, sizeof(len), MSG_PEEK);
+            if (rc <= 0)
+            {
+                // Connection error or closed
+                free(pfds);
                 return;
+            }
 
-            recv_all(sockfd, buff, len);
+            // Special case: If exactly control message size, might be control message
+            if (rc == sizeof(len) && len == sizeof(tcp_request_t))
+            {
+                // Could be a control message, read it fully
+                tcp_request_t request;
+                rc = recv_all(sockfd, &request, sizeof(request));
 
-            /* Print the message received from the UDP client */
-            parse_subscription(buff);
+                if (rc && request.type == SERVER_SHUTDOWN)
+                {
+                    printf("Server is shutting down. Closing connection.\n");
+                    free(pfds);
+                    return;
+                }
+
+                // Not a shutdown message, it was actually a UDP message
+                // We need to process the message now
+                char buff[2 * MSG_MAXSIZE];
+                memcpy(buff, &request, sizeof(request)); // Copy what we've read
+
+                // Parse and display
+                parse_subscription(buff);
+            }
+            else
+            {
+                // Normal UDP message
+                char buff[2 * MSG_MAXSIZE];
+
+                // Read length prefix
+                recv_all(sockfd, &len, sizeof(len));
+
+                // Read message content
+                recv_all(sockfd, buff, len);
+
+                // Parse and display
+                parse_subscription(buff);
+            }
         }
         else if (pfds[0].revents & POLLIN)
         {
@@ -90,6 +133,7 @@ void subscriber(int sockfd, char *id)
                     request.type = EXIT;
 
                     send_all(sockfd, &request, sizeof(request));
+                    free(pfds); // Free the dynamically allocated memory
                     return;
                 }
             }
@@ -103,6 +147,16 @@ void subscriber(int sockfd, char *id)
                 }
                 else
                 {
+                    // If needed to add a new fd (example, not actually needed here)
+                    if (pfds_size >= pfds_capacity)
+                    {
+                        // Double the capacity when full
+                        pfds_capacity *= 2;
+                        struct pollfd *new_pfds = (struct pollfd *)realloc(pfds, pfds_capacity * sizeof(struct pollfd));
+                        DIE(new_pfds == NULL, "realloc failed for pfds");
+                        pfds = new_pfds;
+                    }
+
                     tcp_request_t request;
                     memset(&request, 0, sizeof(request));
                     strcpy(request.id, id);
@@ -147,6 +201,7 @@ void subscriber(int sockfd, char *id)
             }
         }
     }
+    free(pfds); // Free the dynamically allocated memory
 }
 
 int main(int argc, char *argv[])
@@ -161,7 +216,8 @@ int main(int argc, char *argv[])
     setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
     uint16_t server_port;
-    int rc = sscanf(argv[3], "%hu", &server_port);
+    int rc;
+    rc = sscanf(argv[3], "%hu", &server_port);
     DIE(rc != 1, "sscanf() failed");
 
     int sockfd = -1;
@@ -171,10 +227,14 @@ int main(int argc, char *argv[])
     struct sockaddr_in serv_addr;
     socklen_t socket_len = sizeof(struct sockaddr_in);
 
+    // Setează opțiunea SO_REUSEADDR
     int enable = 1;
-    setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR | TCP_NODELAY, &enable,
-               sizeof(int));
-    DIE(sockfd < 0, "setsockopt() failed");
+    rc = setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int));
+    DIE(rc < 0, "setsockopt(SO_REUSEADDR) failed");
+
+    // Setează opțiunea TCP_NODELAY (dezactivează algoritmul lui Nagle)
+    rc = setsockopt(sockfd, IPPROTO_TCP, TCP_NODELAY, &enable, sizeof(int));
+    DIE(rc < 0, "setsockopt(TCP_NODELAY) failed");
 
     memset(&serv_addr, 0, socket_len);
     serv_addr.sin_family = AF_INET;

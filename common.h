@@ -45,7 +45,8 @@ enum request_type {
     EXIT,
     SUBSCRIBE,
     UNSUBSCRIBE,
-    CONNECT
+    CONNECT,
+    SERVER_SHUTDOWN
 };
 
 struct tcp_request_t {
