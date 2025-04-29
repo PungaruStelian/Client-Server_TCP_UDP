@@ -37,65 +37,50 @@ bool topic_matches_pattern(const std::string& topic, const std::string& pattern)
         pattern_parts.push_back(part);
     }
 
-    size_t topic_idx = 0;
-    size_t pattern_idx = 0;
-
-    while (topic_idx < topic_parts.size() && pattern_idx < pattern_parts.size()) {
-        if (pattern_parts[pattern_idx] == "+") {
-            // '+' matches exactly one level
-            topic_idx++;
-            pattern_idx++;
-        } else if (pattern_parts[pattern_idx] == "*") {
-            // '*' matches zero or more levels
-            pattern_idx++;
-            if (pattern_idx == pattern_parts.size()) {
-                // '*' is the last part of the pattern, matches the rest of the topic
-                return true;
-            }
-            // Try to match the rest of the pattern against the remaining topic parts
-            while (topic_idx < topic_parts.size()) {
-                // Check if the rest of the topic matches the rest of the pattern
-                size_t temp_topic_idx = topic_idx;
-                size_t temp_pattern_idx = pattern_idx;
-                bool possible_match = true;
-                while (temp_topic_idx < topic_parts.size() && temp_pattern_idx < pattern_parts.size()) {
-                     // Check pattern part first to handle '+' correctly
-                     if (pattern_parts[temp_pattern_idx] == "+") {
-                         temp_topic_idx++;
-                         temp_pattern_idx++;
-                     } else if (pattern_parts[temp_pattern_idx] == topic_parts[temp_topic_idx]) {
-                         temp_topic_idx++;
-                         temp_pattern_idx++;
-                     } else {
-                         possible_match = false;
-                         break;
-                     }
-                }
-                // If the rest of the pattern was fully matched
-                if (possible_match && temp_pattern_idx == pattern_parts.size()) {
-                     // And the rest of the topic was also fully consumed
-                     if (temp_topic_idx == topic_parts.size()) return true;
-                     // Removed the potentially redundant check:
-                     // if (temp_pattern_idx > 0 && pattern_parts[temp_pattern_idx-1] == "+" && temp_topic_idx == topic_parts.size()) return true;
-                }
-                // If not matched, advance topic_idx to try matching '*' against more levels
-                topic_idx++;
-            }
-            // If '*' was followed by something, but we ran out of topic parts
-            return false;
-
-        } else if (pattern_parts[pattern_idx] == topic_parts[topic_idx]) {
-            // Exact match for this level
-            topic_idx++;
-            pattern_idx++;
-        } else {
-            // Mismatch
+    // Recursive helper function to handle complex wildcard matching
+    std::function<bool(size_t, size_t)> match = [&](size_t t_idx, size_t p_idx) -> bool {
+        // Base case: reached the end of both strings
+        if (t_idx == topic_parts.size() && p_idx == pattern_parts.size()) {
+            return true;
+        }
+        
+        // If we've reached the end of the pattern but not the topic, no match
+        if (p_idx == pattern_parts.size()) {
             return false;
         }
-    }
+        
+        // If we've reached the end of topic but not pattern, only "*" can match
+        if (t_idx == topic_parts.size()) {
+            // Only "*" can match with empty topic parts
+            return pattern_parts[p_idx] == "*" && match(t_idx, p_idx + 1);
+        }
+        
+        // Handle different pattern cases
+        if (pattern_parts[p_idx] == "+") {
+            // '+' matches exactly one level
+            return match(t_idx + 1, p_idx + 1);
+        } 
+        else if (pattern_parts[p_idx] == "*") {
+            // '*' can match zero or more levels
+            
+            // Try matching "*" with zero levels (skip the "*")
+            if (match(t_idx, p_idx + 1)) {
+                return true;
+            }
+            
+            // Try matching "*" with one or more levels
+            return match(t_idx + 1, p_idx);
+        } 
+        else {
+            // Regular string matching
+            if (pattern_parts[p_idx] == topic_parts[t_idx]) {
+                return match(t_idx + 1, p_idx + 1);
+            }
+            return false;
+        }
+    };
 
-    // Return true only if both topic and pattern parts are fully consumed
-    return topic_idx == topic_parts.size() && pattern_idx == pattern_parts.size();
+    return match(0, 0);
 }
 
 void send_message(stored_message_t *message, int fd) {
