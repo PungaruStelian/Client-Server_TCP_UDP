@@ -1,27 +1,129 @@
-#include <bits/stdc++.h>
+#include "server.h"
 
-#include <arpa/inet.h>
-#include <errno.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <sys/time.h>
-#include <sys/timerfd.h>
-#include <netinet/tcp.h>
-
-#include "common.h"
-#include "utils.h"
-#include "parser.h"
-
+// Global variables
 std::map<std::string, tcp_client_t *> ids;
 std::map<std::string, std::vector<tcp_client_t *>> topics;
 std::map<int, std::pair<in_addr, uint16_t>> ips_ports;
 
+int recv_all(int sockfd, void *buffer, int len) {
+    int bytes_received = 0;
+    int bytes_remaining = len;
+    char *buff = (char *)buffer;
+
+    while (bytes_remaining > 0) {
+        int rc = recv(sockfd, buff + bytes_received, bytes_remaining, 0);
+        DIE(rc == -1, "recv() failed");
+
+        if (!rc)
+            return 0;
+
+        bytes_received += rc;
+        bytes_remaining -= rc;
+    }
+
+    return bytes_received;
+}
+
+int send_all(int sockfd, void *buffer, int len) {
+    int bytes_sent = 0;
+    int bytes_remaining = len;
+    char *buff = (char *)buffer;
+
+    while (bytes_remaining > 0) {
+        int rc = send(sockfd, buff + bytes_sent, bytes_remaining, 0);
+        DIE(rc == -1, "send() failed");
+
+        bytes_sent += rc;
+        bytes_remaining -= rc;
+    }
+
+    return bytes_sent;
+}
+
+// Functions from parser.cpp
+int parse_by_whitespace(char *buf, char **argv) {
+    int argc = 0;
+    for (char *p = strtok(buf, " \t\n"); p; p = strtok(NULL, " \t\n"))
+        argv[argc++] = p;
+    return argc;
+}
+
+void print_int(char *buff, char *topic) {
+    int8_t sign = *buff;
+    buff += sizeof(sign);
+
+    int64_t nr = ntohl(*(u_int32_t *)buff);
+
+    if (sign)
+        nr = -nr;
+
+    printf("%s - INT - %ld\n", topic, nr);
+}
+
+void print_short_real(char *buff, char *topic) {
+    float nr = ntohs(*(u_int16_t *)buff) / (float)100;
+
+    printf("%s - SHORT_REAL - %.2f\n", topic, nr);
+}
+
+void print_float(char *buff, char *topic) {
+    int8_t sign = *buff;
+    buff += sizeof(sign);
+
+    float nr = ntohl(*(u_int32_t *)buff);
+    buff += sizeof(uint32_t);
+
+    if (sign)
+        nr = -nr;
+
+    int8_t pow10 = *buff;
+
+    printf("%s - FLOAT - %.4f\n", topic, nr / (float) pow(10, pow10));
+}
+
+void parse_subscription(char *buff) {
+    // Skip the prepended IP address (4 bytes) and port (2 bytes)
+    struct in_addr udp_ip;
+    uint16_t udp_port;
+
+    memcpy(&udp_ip, buff, sizeof(struct in_addr));
+    buff += sizeof(struct in_addr);
+
+    memcpy(&udp_port, buff, sizeof(uint16_t));
+    buff += sizeof(uint16_t);
+
+    // Now 'buff' points to the start of the original UDP payload (topic)
+    char topic[51] = { 0 };
+    memcpy(topic, buff, 50);
+    buff += 50; // Move buffer pointer past the topic
+
+    u_int8_t type = *buff;
+    buff += sizeof(u_int8_t); // Move buffer pointer past the type
+
+    // Print the source UDP client info along with the message
+    printf("%s:%hu - ", inet_ntoa(udp_ip), ntohs(udp_port));
+
+    switch (type) {
+    case INT:
+        print_int(buff, topic);
+        break;
+    case SHORT_REAL:
+        print_short_real(buff, topic);
+        break;
+    case FLOAT:
+        print_float(buff, topic);
+        break;
+    case STRING:
+        // The rest of the buffer is the string content
+        printf("%s - STRING - %s\n", topic, buff);
+        break;
+    default:
+        fprintf(stderr, "Unknown data type received.\n");
+        break;
+    }
+}
+
+// Original server.cpp functions
 bool topic_matches_pattern(const std::string& topic, const std::string& pattern) {
     // Split both topic and pattern by '/'
     std::vector<std::string> topic_parts;
@@ -89,6 +191,7 @@ void send_message(stored_message_t *message, int fd) {
 }
 
 void server(int listenfd, int udp_cli_fd) {
+    // Original server function...
     std::vector<struct pollfd> poll_fds;
 
     poll_fds.push_back(pollfd{listenfd, POLLIN, 0});
@@ -204,13 +307,6 @@ void server(int listenfd, int udp_cli_fd) {
 
                     /* If no disconnected client needs this message, delete it */
                     if (message->c == 0) {
-                        // Also ensure no connected client holds the only reference implicitly via clients_sent_to
-                        // If clients_sent_to is empty AND message->c is 0, it's safe to delete.
-                        // If clients_sent_to is not empty, a connected client received it, so don't delete yet
-                        // (The message struct itself doesn't track connected clients, only SF ones via 'c')
-                        // A better approach might involve shared_ptr or more robust ref counting.
-                        // For now, let's assume deletion is okay if 'c' is 0.
-                        // Consider potential memory leaks if a message is sent only to connected clients.
                         delete[] message->buff; // Free the buffer first
                         delete message;         // Then free the struct
                     }
@@ -223,7 +319,7 @@ void server(int listenfd, int udp_cli_fd) {
 
                     // Handle "exit" command
                     if (argc == 1 && strcmp(argv[0], "exit") == 0) {
-                        // Close all client sockets and the listening/UDP sockets
+                        // Send shutdown notice to all connected clients
                         for (auto const& [id, client_ptr] : ids) {
                             if (client_ptr->connected) {
                                 tcp_request_t shutdown_notice;
@@ -234,16 +330,17 @@ void server(int listenfd, int udp_cli_fd) {
                             }
                         }
                         
-                        // Apoi așteaptă puțin timp pentru ca mesajele să ajungă
+                        // Wait briefly for messages to be delivered
                         usleep(100000);  // 100ms
                         
-                        // Apoi închide socket-urile ca înainte
+                        // Close all sockets
                         for (const auto &p : poll_fds) {
                             if (p.fd != STDIN_FILENO) {
                                 close(p.fd);
                             }
                         }
-                        // Clean up client data structures (optional, OS will reclaim)
+                        
+                        // Clean up client data structures
                         for (auto const& [id, client_ptr] : ids) {
                             for (auto msg : client_ptr->lost_messages) {
                                 // Decrement count or delete if unique owner
@@ -254,6 +351,7 @@ void server(int listenfd, int udp_cli_fd) {
                             }
                             delete client_ptr;
                         }
+                        
                         ids.clear();
                         topics.clear();
                         ips_ports.clear();
@@ -313,7 +411,7 @@ void server(int listenfd, int udp_cli_fd) {
                                 i--; // Adjust loop index
                             } else {
                                 // Client is reconnecting
-                                printf("New client %s connected from %s:%hu.\n", // Corrected order
+                                printf("New client %s connected from %s:%hu.\n", 
                                        client_id_str.c_str(),
                                        inet_ntoa(ips_ports[poll_fds[i].fd].first),
                                        ntohs(ips_ports[poll_fds[i].fd].second));
@@ -335,7 +433,7 @@ void server(int listenfd, int udp_cli_fd) {
                             }
                         } else {
                             // New client ID
-                            printf("New client %s connected from %s:%hu.\n", // Corrected order
+                            printf("New client %s connected from %s:%hu.\n", 
                                    client_id_str.c_str(),
                                    inet_ntoa(ips_ports[poll_fds[i].fd].first),
                                    ntohs(ips_ports[poll_fds[i].fd].second));
@@ -345,8 +443,6 @@ void server(int listenfd, int udp_cli_fd) {
                             new_client->fd = poll_fds[i].fd;
                             new_client->id = client_id_str;
                             new_client->connected = true;
-                            // new_client->topics map is initially empty
-                            // new_client->lost_messages vector is initially empty
 
                             ids.insert({client_id_str, new_client});
                         }
@@ -378,8 +474,6 @@ void server(int listenfd, int udp_cli_fd) {
 
                             // Update/add the topic and SF flag in the client's map
                             client->topics[topic_str] = request.subscribe.sf;
-                            // Acknowledge subscription (optional)
-                            // send_all(client->fd, "Subscribed OK", 14);
                         } else {
                              fprintf(stderr, "Subscribe request from unknown client ID: %s\n", client_id_str.c_str());
                         }
@@ -400,16 +494,10 @@ void server(int listenfd, int udp_cli_fd) {
                                 auto &subs = topics[topic_str];
                                 // Use erase-remove idiom
                                 subs.erase(std::remove(subs.begin(), subs.end(), client), subs.end());
-                                // If the topic has no more subscribers, remove the topic entry (optional)
-                                // if (subs.empty()) {
-                                //     topics.erase(topic_str);
-                                // }
                             }
 
                             // Remove the topic from the client's map
                             client->topics.erase(topic_str);
-                            // Acknowledge unsubscription (optional)
-                            // send_all(client->fd, "Unsubscribed OK", 16);
                         } else {
                              fprintf(stderr, "Unsubscribe request from unknown client ID: %s\n", client_id_str.c_str());
                         }

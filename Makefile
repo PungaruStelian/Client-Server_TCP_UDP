@@ -3,10 +3,10 @@ CFLAGS=-Wall -Werror -Wno-error=unused-variable -g
 
 build: server subscriber
 
-server: server.cpp common.cpp parser.cpp
+server: server.cpp
 	$(CC) -o $@ $^ $(CFLAGS)
 
-subscriber: subscriber.cpp common.cpp parser.cpp
+subscriber: subscriber.cpp
 	$(CC) -o $@ $^ $(CFLAGS)
 
 clean:
