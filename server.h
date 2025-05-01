@@ -31,11 +31,6 @@ struct tcp_client_t {
     std::vector<stored_message_t *> lost_messages;
 };
 
-// External globals
-extern std::map<std::string, tcp_client_t *> ids;
-extern std::map<std::string, std::vector<tcp_client_t *>> topics;
-extern std::map<int, std::pair<in_addr, uint16_t>> ips_ports;
-
 /**
  * @brief Check if a topic matches a pattern with wildcards
  * 
