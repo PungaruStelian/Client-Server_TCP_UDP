@@ -10,7 +10,8 @@ void subscriber(int sockfd, char *id)
     tcp_request_t connect;
     memset(&connect, 0, sizeof(connect));
     strcpy(connect.id, id);
-    connect.type = CONNECT;
+    connect.type = MESSAGE;
+    connect.message = CONNECT;
     send_all(sockfd, &connect, sizeof(connect));
 
     // Initial capacity for pfds array
@@ -33,8 +34,8 @@ void subscriber(int sockfd, char *id)
     pfds[pfds_size].revents = 0;
     ++pfds_size;
 
-    char buf[MSG_MAXSIZE + 1];
-    memset(buf, 0, MSG_MAXSIZE + 1);
+    char buf[MESSAGES_SIZE + 1];
+    memset(buf, 0, MESSAGES_SIZE + 1);
 
     while (1)
     {
@@ -54,6 +55,7 @@ void subscriber(int sockfd, char *id)
                 return;
             }
 
+            char buff[2 * MESSAGES_SIZE];
             // Special case: If exactly control message size, might be control message
             if (rc == sizeof(len) && len == sizeof(tcp_request_t))
             {
@@ -61,35 +63,24 @@ void subscriber(int sockfd, char *id)
                 tcp_request_t request;
                 rc = recv_all(sockfd, &request, sizeof(request));
 
-                if (rc && request.type == SERVER_SHUTDOWN)
+                if (rc && request.message == SHUTDOWN)
                 {
-                    printf("Server is shutting down. Closing connection.\n");
+                    std::cout << "Server is shutting down. Closing connection.\n";
                     free(pfds);
                     return;
                 }
 
-                // Not a shutdown message, it was actually a UDP message
-                // We need to process the message now
-                char buff[2 * MSG_MAXSIZE];
                 memcpy(buff, &request, sizeof(request)); // Copy what we've read
-
-                // Parse and display
-                parse_subscription(buff);
             }
             else
             {
-                // Normal UDP message
-                char buff[2 * MSG_MAXSIZE];
-
                 // Read length prefix
                 recv_all(sockfd, &len, sizeof(len));
 
                 // Read message content
                 recv_all(sockfd, buff, len);
-
-                // Parse and display
-                parse_subscription(buff);
             }
+            parse_input(buff);
         }
         else if (pfds[0].revents & POLLIN)
         {
@@ -97,16 +88,16 @@ void subscriber(int sockfd, char *id)
             fgets(buf, sizeof(buf), stdin);
 
             /* Parse the input */
-            char *argv[MSG_MAXSIZE];
+            char *argv[MESSAGES_SIZE];
             int argc;
-            argc = parse_by_whitespace(buf, argv);
+            argc = string_to_argv(buf, argv);
 
             /* If the subscriber wishes to disconnect */
             if (!strcmp(argv[0], "exit"))
             {
                 if (argc != 1)
                 {
-                    printf("\nWrong format for exit\n");
+                    std::cout << "\nWrong format for exit\n";
                 }
                 else
                 {
@@ -126,7 +117,7 @@ void subscriber(int sockfd, char *id)
             {
                 if (argc < 2)
                 {
-                    printf("\nWrong format for subscribe\n");
+                    std::cout << "\nWrong format for subscribe\n";
                 }
                 else
                 {
@@ -158,7 +149,7 @@ void subscriber(int sockfd, char *id)
 
                     send_all(sockfd, &request, sizeof(request));
 
-                    printf("Subscribed to topic.\n");
+                    std::cout << "Subscribed to topic.\n";
                 }
             }
 
@@ -167,7 +158,7 @@ void subscriber(int sockfd, char *id)
             {
                 if (argc != 2)
                 {
-                    printf("\nWrong format for unsubscribe\n");
+                    std::cout << "\nWrong format for unsubscribe\n";
                 }
                 else
                 {
@@ -179,7 +170,7 @@ void subscriber(int sockfd, char *id)
 
                     send_all(sockfd, &request, sizeof(request));
 
-                    printf("Unsubscribed from topic.\n");
+                    std::cout << "Unsubscribed from topic.\n";
                 }
             }
         }
@@ -191,8 +182,7 @@ int main(int argc, char *argv[])
 {
     if (argc != 4)
     {
-        fprintf(stderr, "\nUsage: %s <ID_CLIENT> <IP_SERVER> <PORT_SERVER>\n",
-                argv[0]);
+        std::cerr << "\nUsage: " << argv[0] << " <ID_CLIENT> <IP_SERVER> <PORT_SERVER>\n";
         return 1;
     }
 

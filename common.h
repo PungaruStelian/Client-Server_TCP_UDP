@@ -13,10 +13,13 @@
 #include <unistd.h>
 #include <cmath>
 
+#include <iostream>
+#include <iomanip>
+
 /**
  * @brief Maximum size of a message buffer
  */
-#define MSG_MAXSIZE 1024
+#define MESSAGES_SIZE 1500
 
 /**
  * @brief Macro to handle errors
@@ -27,8 +30,8 @@
 #define DIE(assertion, call_description)                                       \
     do {                                                                       \
         if (assertion) {                                                       \
-            fprintf(stderr, "(%s, %d): ", __FILE__, __LINE__);                 \
-            perror(call_description);                                          \
+            std::cerr << "(" << __FILE__ << ", " << __LINE__ << "): ";         \
+            std::cerr << call_description << ": " << strerror(errno) << std::endl; \
             exit(errno);                                                       \
         }                                                                      \
     } while (0)
@@ -36,18 +39,25 @@
 /**
  * @brief Types of requests that can be sent between client and server
  */
-enum request_type {
+enum command_t {
     EXIT,               ///< Client requests to disconnect
     SUBSCRIBE,          ///< Client subscribes to a topic
     UNSUBSCRIBE,        ///< Client unsubscribes from a topic
-    CONNECT,            ///< Client connects to the server
-    SERVER_SHUTDOWN     ///< Server notifies clients it's shutting down
+    MESSAGE,          ///< Client sends a message
+};
+
+/**
+ * @brief Types of system messages
+ */
+enum system_message_t {
+    CONNECT,        ///< Client connects to the server
+    SHUTDOWN        ///< Server notifies clients it's shutting down
 };
 
 /**
  * @brief Types of data that can be transmitted in messages
  */
-enum data_type {
+enum data_t {
     INT = 0,            ///< Integer value
     SHORT_REAL = 1,     ///< Short real value (fixed 2 decimal places)
     FLOAT = 2,          ///< Float value (variable decimal places)
@@ -60,14 +70,14 @@ enum data_type {
 struct subscribe_t {
     char topic[51];     ///< Topic name (max 50 chars + null terminator)
     bool sf;            ///< Store-and-forward flag
-} __attribute__ ((__packed__));
+};
 
 /**
  * @brief Structure for an unsubscription request
  */
 struct unsubscribe_t {
     char topic[51];     ///< Topic name (max 50 chars + null terminator)
-} __attribute__ ((__packed__));
+};
 
 /**
  * @brief Structure for a TCP request
@@ -77,9 +87,10 @@ struct tcp_request_t {
     union {
         subscribe_t subscribe;      ///< Subscribe request data
         unsubscribe_t unsubscribe;  ///< Unsubscribe request data
+        system_message_t message;  ///< System message data
     };
-    request_type type;  ///< Type of request
-} __attribute__ ((__packed__));
+    command_t type;  ///< Type of request (-1 for system messages)
+};
 
 /**
  * @brief Receives exactly 'len' bytes from socket
@@ -108,7 +119,7 @@ int send_all(int sockfd, void *buffer, int len);
  * @param argv Array to store parsed arguments
  * @return int Number of arguments parsed
  */
-int parse_by_whitespace(char *buf, char **argv);
+int string_to_argv(char *buf, char **argv);
 
 /**
  * @brief Print an integer value from the buffer in the expected format
@@ -139,6 +150,6 @@ void print_float(char *buff, char *topic);
  * 
  * @param buff Buffer containing the message
  */
-void parse_subscription(char *buff);
+void parse_input(char *buff);
 
 #endif // COMMON_H
