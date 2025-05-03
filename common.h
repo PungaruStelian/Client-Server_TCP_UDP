@@ -122,34 +122,10 @@ int send_all(int sockfd, void *buffer, int len);
 int string_to_argv(char *buf, char **argv);
 
 /**
- * @brief Print an integer value from the buffer in the expected format
- * 
- * @param buff Buffer containing the integer value
- * @param topic Topic name
- */
-void print_int(char *buff, char *topic);
-
-/**
- * @brief Print a short real value from the buffer in the expected format
- * 
- * @param buff Buffer containing the short real value
- * @param topic Topic name
- */
-void print_short_real(char *buff, char *topic);
-
-/**
- * @brief Print a float value from the buffer in the expected format
- * 
- * @param buff Buffer containing the float value
- * @param topic Topic name
- */
-void print_float(char *buff, char *topic);
-
-/**
  * @brief Parse a subscription message and print it
  * 
  * @param buff Buffer containing the message
  */
-void parse_input(char *buff);
+void parse_input(const std::string& buff);
 
 #endif // COMMON_H

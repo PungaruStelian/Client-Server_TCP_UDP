@@ -1,94 +1,92 @@
 #include "server.h"
-#include "common.h"
 
 // Global variables
 std::map<std::string, tcp_client_t *> ids;
 std::map<std::string, std::vector<tcp_client_t *>> topics;
 std::map<int, std::pair<in_addr, uint16_t>> ips_ports;
 
-// Original server.cpp functions
-bool topic_matches_pattern(const std::string &topic, const std::string &pattern)
-{
-    // Split both topic and pattern by '/'
-    std::vector<std::string> topic_parts;
-    std::vector<std::string> pattern_parts;
-    std::stringstream ss_topic(topic);
-    std::stringstream ss_pattern(pattern);
+void append_binary_data(std::string& str, const void* data, size_t len) {
+    const char* char_data = static_cast<const char*>(data);
+    str.append(char_data, len);
+}
+
+bool topic_matches_pattern(const std::string &topic, const std::string &pattern) {
+    // Splităm topic-ul și pattern-ul în părți separate de '/'
+    std::vector<std::string> topic_parts, pattern_parts;
     std::string part;
-
-    while (getline(ss_topic, part, '/'))
-    {
+    
+    // Split pentru topic
+    size_t start = 0, end;
+    while ((end = topic.find('/', start)) != std::string::npos) {
+        part = topic.substr(start, end - start);
         topic_parts.push_back(part);
+        start = end + 1;
     }
-    while (getline(ss_pattern, part, '/'))
-    {
+    topic_parts.push_back(topic.substr(start));
+    
+    // Split pentru pattern
+    start = 0;
+    while ((end = pattern.find('/', start)) != std::string::npos) {
+        part = pattern.substr(start, end - start);
         pattern_parts.push_back(part);
+        start = end + 1;
+    }
+    pattern_parts.push_back(pattern.substr(start));
+
+    // Indici pentru parcurgerea părților
+    size_t t_idx = 0, p_idx = 0;
+    // Poziții de backtracking pentru '*'
+    size_t t_back = 0, p_back = 0;
+    bool backtrack = false;
+
+    while (t_idx < topic_parts.size()) {
+        if (p_idx < pattern_parts.size()) {
+            // Caz 1: Potrivire exactă sau '+'
+            if (pattern_parts[p_idx] == "+" || pattern_parts[p_idx] == topic_parts[t_idx]) {
+                t_idx++;
+                p_idx++;
+                continue;
+            }
+            // Caz 2: Wildcard '*'
+            if (pattern_parts[p_idx] == "*") {
+                // Memorăm poziția pentru backtrack
+                t_back = t_idx;
+                p_back = p_idx;
+                p_idx++;
+                backtrack = true;
+                continue;
+            }
+        }
+        
+        // Caz 3: Backtrack pentru '*'
+        if (backtrack && p_back < pattern_parts.size()) {
+            t_back++;
+            t_idx = t_back;
+            p_idx = p_back + 1;
+            continue;
+        }
+
+        // Niciun caz nu se potrivește
+        return false;
     }
 
-    // Recursive helper function to handle complex wildcard matching
-    std::function<bool(size_t, size_t)> match = [&](size_t t_idx, size_t p_idx) -> bool
-    {
-        // Base case: reached the end of both strings
-        if (t_idx == topic_parts.size() && p_idx == pattern_parts.size())
-        {
-            return true;
-        }
+    // Verificăm restul pattern-ului (doar '*' permise)
+    while (p_idx < pattern_parts.size() && pattern_parts[p_idx] == "*") {
+        p_idx++;
+    }
 
-        // If we've reached the end of the pattern but not the topic, no match
-        if (p_idx == pattern_parts.size())
-        {
-            return false;
-        }
-
-        // If we've reached the end of topic but not pattern, only "*" can match
-        if (t_idx == topic_parts.size())
-        {
-            // Only "*" can match with empty topic parts
-            return pattern_parts[p_idx] == "*" && match(t_idx, p_idx + 1);
-        }
-
-        // Handle different pattern cases
-        if (pattern_parts[p_idx] == "+")
-        {
-            // '+' matches exactly one level
-            return match(t_idx + 1, p_idx + 1);
-        }
-        else if (pattern_parts[p_idx] == "*")
-        {
-            // '*' can match zero or more levels
-
-            // Try matching "*" with zero levels (skip the "*")
-            if (match(t_idx, p_idx + 1))
-            {
-                return true;
-            }
-
-            // Try matching "*" with one or more levels
-            return match(t_idx + 1, p_idx);
-        }
-        else
-        {
-            // Regular string matching
-            if (pattern_parts[p_idx] == topic_parts[t_idx])
-            {
-                return match(t_idx + 1, p_idx + 1);
-            }
-            return false;
-        }
-    };
-
-    return match(0, 0);
+    // Toate părțile trebuie să fie procesate
+    return (t_idx == topic_parts.size() && p_idx == pattern_parts.size());
 }
 
 void send_message(stored_message_t *message, int fd)
 {
     send_all(fd, &message->len, sizeof(message->len));
-    send_all(fd, message->buff, message->len);
+    send_all(fd, (char *)message->buff.c_str(), message->len);
 }
 
 void server(int listenfd, int udp_cli_fd)
 {
-    // Original server function...
     std::vector<struct pollfd> poll_fds;
 
     poll_fds.push_back(pollfd{listenfd, POLLIN, 0});
@@ -147,16 +145,17 @@ void server(int listenfd, int udp_cli_fd)
                     stored_message_t *message = new stored_message_t; // Declare and initialize message
                     message->len = total_len_for_subscriber;
                     message->c = 0; // Reference count for SF clients
-                    // Allocate buffer for the complete message (IP + Port + Payload)
-                    message->buff = new char[message->len];
+                    message->buff.clear(); // Start with an empty string
+                    message->buff.reserve(total_len_for_subscriber);
 
                     // Prepend UDP client IP and port to the message buffer
                     uint16_t udp_port_n = udp_cli_addr.sin_port;
                     in_addr_t udp_ip_n = udp_cli_addr.sin_addr.s_addr;
-                    memcpy(message->buff, &udp_ip_n, sizeof(in_addr_t));
-                    memcpy(message->buff + sizeof(in_addr_t), &udp_port_n, sizeof(uint16_t));
-                    // Copy the actual UDP payload after IP and port
-                    memcpy(message->buff + sizeof(in_addr_t) + sizeof(uint16_t), buff, bytes_received);
+
+                    // Append binary data to the string
+                    append_binary_data(message->buff, &udp_ip_n, sizeof(in_addr_t));
+                    append_binary_data(message->buff, &udp_port_n, sizeof(uint16_t));
+                    append_binary_data(message->buff, buff, bytes_received);
 
                     // Extract topic (first 50 bytes of the *original* UDP payload)
                     char topic_cstr[51];
@@ -221,7 +220,6 @@ void server(int listenfd, int udp_cli_fd)
                     /* If no disconnected client needs this message, delete it */
                     if (message->c == 0)
                     {
-                        delete[] message->buff; // Free the buffer first
                         delete message;         // Then free the struct
                     }
 
@@ -267,7 +265,6 @@ void server(int listenfd, int udp_cli_fd)
                                 // Decrement count or delete if unique owner
                                 if (--msg->c == 0)
                                 {
-                                    delete[] msg->buff;
                                     delete msg;
                                 }
                             }
@@ -307,7 +304,7 @@ void server(int listenfd, int udp_cli_fd)
 
                         if (!client_id_to_remove.empty() && ids.count(client_id_to_remove))
                         {
-                            std::cout << "Client " << client_id_to_remove.c_str() << " disconnected unexpectedly.\n";
+                            std::cout << "Client " << client_id_to_remove << " disconnected unexpectedly.\n";
                             ids[client_id_to_remove]->connected = false;
                             // Don't remove from 'ids' map, just mark as disconnected
                         }
@@ -338,7 +335,7 @@ void server(int listenfd, int udp_cli_fd)
                                 if (client->connected)
                                 {
                                     // ID already connected, reject new connection
-                                    std::cout << "Client " << client_id_str.c_str() << " already connected.\n";
+                                    std::cout << "Client " << client_id_str << " already connected.\n";
                                     close(poll_fds[i].fd); // Close the new socket
                                     ips_ports.erase(poll_fds[i].fd);
                                     poll_fds.erase(poll_fds.begin() + i);
@@ -347,7 +344,7 @@ void server(int listenfd, int udp_cli_fd)
                                 else
                                 {
                                     // Client is reconnecting
-                                        std::cout << "New client " << client_id_str.c_str() << " connected from " << inet_ntoa(ips_ports[poll_fds[i].fd].first) << ":" << ntohs(ips_ports[poll_fds[i].fd].second) << ".\n";
+                                        std::cout << "New client " << client_id_str << " connected from " << inet_ntoa(ips_ports[poll_fds[i].fd].first) << ":" << ntohs(ips_ports[poll_fds[i].fd].second) << ".\n";
 
                                     // Update client state
                                     client->fd = poll_fds[i].fd; // Update fd in case it changed
@@ -360,7 +357,6 @@ void server(int listenfd, int udp_cli_fd)
                                         // Decrement reference count and delete if zero
                                         if (--message->c == 0)
                                         {
-                                            delete[] message->buff;
                                             delete message;
                                         }
                                     }
@@ -370,7 +366,7 @@ void server(int listenfd, int udp_cli_fd)
                             else
                             {
                                 // New client ID
-                                std::cout << "New client " << client_id_str.c_str() << " connected from " << inet_ntoa(ips_ports[poll_fds[i].fd].first) << ":" << ntohs(ips_ports[poll_fds[i].fd].second) << ".\n";
+                                std::cout << "New client " << client_id_str << " connected from " << inet_ntoa(ips_ports[poll_fds[i].fd].first) << ":" << ntohs(ips_ports[poll_fds[i].fd].second) << ".\n";
 
                                 // Create new client entry
                                 tcp_client_t *new_client = new tcp_client_t;
@@ -417,7 +413,7 @@ void server(int listenfd, int udp_cli_fd)
                             }
                             else
                             {
-                                std::cerr << "Subscribe request from unknown client ID: " << client_id_str.c_str() << "\n";
+                                std::cerr << "Subscribe request from unknown client ID: " << client_id_str << "\n";
                             }
                             break;
                         } // End case SUBSCRIBE
@@ -446,7 +442,7 @@ void server(int listenfd, int udp_cli_fd)
                             }
                             else
                             {
-                                std::cerr << "Unsubscribe request from unknown client ID: " << client_id_str.c_str() << "\n";
+                                std::cerr << "Unsubscribe request from unknown client ID: " << client_id_str << "\n";
                             }
                             break;
                         } // End case UNSUBSCRIBE
@@ -458,13 +454,13 @@ void server(int listenfd, int udp_cli_fd)
 
                             if (ids.count(client_id_str))
                             {
-                                std::cout << "Client " << client_id_str.c_str() << " disconnected.\n";
+                                std::cout << "Client " << client_id_str << " disconnected.\n";
                                 ids[client_id_str]->connected = false;
                                 // Don't remove from 'ids' map, just mark disconnected
                             }
                             else
                             {
-                                std::cerr << "Exit request from unknown client ID: " << client_id_str.c_str() << "\n";
+                                std::cerr << "Exit request from unknown client ID: " << client_id_str << "\n";
                             }
                             // Close the socket and remove from poll set
                             close(poll_fds[i].fd);
@@ -499,7 +495,7 @@ void server(int listenfd, int udp_cli_fd)
                 if (!client_id_to_mark.empty())
                 {
                     ids[client_id_to_mark]->connected = false;
-                    std::cout << "Client " << client_id_to_mark.c_str() << " marked as disconnected due to error/hangup.\n";
+                    std::cout << "Client " << client_id_to_mark << " marked as disconnected due to error/hangup.\n";
                 }
 
                 close(fd_to_close);

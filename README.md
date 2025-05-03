@@ -5,7 +5,7 @@ This project implements a publish-subscribe messaging system using TCP for clien
 
 ## Starting point
 
-I chose to use C++ in order to take advantage of standard utility classes (such as STL containers). However, the overall implementation follows a C-style approach, as I did not use any custom classes.
+The implementation I chose is a combination of C and C ++, to use STL containers.
 
 The laboratory sessions were very helpful, especially the implementations of the `recv_all` and `send_all` functions from **Lab 7**, which I reused in this assignment.
 

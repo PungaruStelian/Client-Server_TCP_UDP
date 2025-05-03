@@ -1,5 +1,15 @@
 #include "subscriber.h"
-#include "common.h"
+
+std::string recv_string(int sockfd, int len) {
+    std::string result(len, '\0'); // Pre-allocate string with the right size
+    int bytes_received = recv_all(sockfd, &result[0], len);
+    
+    if (bytes_received == 0) {
+        return ""; // Connection closed
+    }
+    
+    return result;
+}
 
 void subscriber(int sockfd, char *id)
 {
@@ -55,7 +65,6 @@ void subscriber(int sockfd, char *id)
                 return;
             }
 
-            char buff[2 * MESSAGES_SIZE];
             // Special case: If exactly control message size, might be control message
             if (rc == sizeof(len) && len == sizeof(tcp_request_t))
             {
@@ -70,17 +79,17 @@ void subscriber(int sockfd, char *id)
                     return;
                 }
 
-                memcpy(buff, &request, sizeof(request)); // Copy what we've read
+                std::string buff(reinterpret_cast<char*>(&request), sizeof(request));
+                parse_input(buff); // Use c_str() if parse_input needs a char*
             }
             else
             {
                 // Read length prefix
                 recv_all(sockfd, &len, sizeof(len));
 
-                // Read message content
-                recv_all(sockfd, buff, len);
+                std::string buff = recv_string(sockfd, len);
+                parse_input(buff); // Use c_str() if parse_input needs a char*
             }
-            parse_input(buff);
         }
         else if (pfds[0].revents & POLLIN)
         {

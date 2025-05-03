@@ -17,10 +17,12 @@
 #include <netinet/tcp.h>
 #include <functional>
 
+#include "common.h"
+
 struct stored_message_t {
     int c;
     int len;
-    char *buff;
+    std::string buff;
 };
 
 struct tcp_client_t {
@@ -30,6 +32,15 @@ struct tcp_client_t {
     std::map<std::string, bool> topics;
     std::vector<stored_message_t *> lost_messages;
 };
+
+/**
+ * @brief Append binary data to a string
+ * 
+ * @param str String to append to
+ * @param data Data to append
+ * @param len Length of data
+ */
+void append_binary_data(std::string& str, const void* data, size_t len);
 
 /**
  * @brief Check if a topic matches a pattern with wildcards

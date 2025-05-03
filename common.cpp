@@ -47,73 +47,77 @@ int string_to_argv(char *buf, char **argv) {
     return argc;
 }
 
-void print_int(char *buff, char *topic) {
-    char sign = *buff;
-    buff += sizeof(sign);
+void parse_input(const std::string& buff) {
+    size_t pos = 0;
 
-    int value = ntohl(*(unsigned int *)buff);
+    // Skip IP (4 bytes) and port (2 bytes)
+    pos += sizeof(in_addr) + sizeof(uint16_t);
 
-    if (sign)
-        value = -value;
+    // Extract topic (50 bytes) and trim at first null
+    std::string topic = buff.substr(pos, 50);
+    size_t null_pos = topic.find('\0');
+    // position found
+    if (null_pos != std::string::npos) {
+        topic.resize(null_pos);
+    }
+    pos += 50;
 
-    std::cout << topic << " - INT - " << value << "\n";
-}
-
-void print_short_real(char *buff, char *topic) {
-    float nr = ntohs(*(unsigned short *)buff) / 100.0;
-    std::cout << topic << " - SHORT_REAL - " << std::fixed << std::setprecision(2) << nr << "\n";
-}
-
-void print_float(char *buff, char *topic) {
-    char sign = *buff;
-    buff += sizeof(sign);
-
-    float nr = ntohl(*(unsigned int *)buff);
-    buff += sizeof(unsigned int);
-
-    if (sign)
-        nr = -nr;
-
-    char exp = *buff;
-
-    std::cout << topic << " - FLOAT - " << std::fixed << std::setprecision(exp) << nr / pow(10, exp) << "\n";
-}
-
-void parse_input(char *buff) {
-    // Skip the prepended IP address (4 bytes) and port (2 bytes)
-    in_addr udp_ip;
-    unsigned short udp_port;
-
-    memcpy(&udp_ip, buff, sizeof(unsigned int));
-    buff += sizeof(unsigned int);
-
-    memcpy(&udp_port, buff, sizeof(unsigned short));
-    buff += sizeof(unsigned short);
-
-    // Now 'buff' points to the start of the original UDP payload (topic)
-    char topic[51];
-    strncpy(topic, buff, 50);
-    topic[50] = '\0'; // Ensure null termination
-    buff += 50; // Move buffer pointer past the topic
-
-    unsigned char type = *buff;
-    buff += sizeof(unsigned char); // Move buffer pointer past the type
+    // Validate remaining buffer size
+    if (pos >= buff.size()) return;
+        unsigned char type = buff[pos++];
 
     switch (type) {
-    case INT:
-        print_int(buff, topic);
-        break;
-    case SHORT_REAL:
-        print_short_real(buff, topic);
-        break;
-    case FLOAT:
-        print_float(buff, topic);
-        break;
-    case STRING:
-        std::cout << topic << " - STRING - " << buff << "\n";
-        break;
-    default:
-        std::cerr << "Unknown data type." << std::endl;
-        break;
+        case INT: {
+            if (pos + sizeof(char) + sizeof(uint32_t) > buff.size()) break;
+            char sign = buff[pos++];
+            
+            uint32_t net_value;
+            memcpy(&net_value, buff.data() + pos, sizeof(uint32_t));
+            int value = ntohl(net_value);
+            if (sign) value = -value;
+            
+            std::cout << topic << " - INT - " << value << "\n";
+            pos += sizeof(uint32_t);
+            break;
+        }
+        case SHORT_REAL: {
+            if (pos + sizeof(uint16_t) > buff.size()) break;
+            
+            uint16_t net_value;
+            memcpy(&net_value, buff.data() + pos, sizeof(uint16_t));
+            float value = ntohs(net_value) / 100.0f;
+            
+            std::cout << topic << " - SHORT_REAL - " 
+                      << std::fixed << std::setprecision(2) << value << "\n";
+            pos += sizeof(uint16_t);
+            break;
+        }
+        case FLOAT: {
+            if (pos + sizeof(char) + sizeof(uint32_t) + sizeof(char) > buff.size()) break;
+            char sign = buff[pos++];
+            
+            uint32_t net_value;
+            memcpy(&net_value, buff.data() + pos, sizeof(uint32_t));
+            pos += sizeof(uint32_t);
+            char exponent = buff[pos++];
+            
+            float value = ntohl(net_value);
+            if (sign) value = -value;
+            value /= pow(10, exponent);
+            
+            std::cout << topic << " - FLOAT - " 
+                      << std::fixed << std::setprecision(exponent) << value << "\n";
+            break;
+        }
+        case STRING: {
+            size_t end = buff.find('\0', pos);
+            if (end == std::string::npos) end = buff.size();
+            std::string payload = buff.substr(pos, end - pos);
+            
+            std::cout << topic << " - STRING - " << payload << "\n";
+            break;
+        }
+        default:
+            std::cerr << "Unknown data type\n";
     }
 }

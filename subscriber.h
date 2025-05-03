@@ -17,6 +17,16 @@
 #include <netinet/tcp.h>
 #include <cmath>
 
+#include "common.h"
+
+/**
+ * @brief Receive a string from the socket
+ * 
+ * @param sockfd Socket file descriptor
+ * @param len Length of the string to receive
+ * @return std::string The received string
+ */
+std::string recv_string(int sockfd, int len);
 
 /**
  * @brief Main subscriber loop
