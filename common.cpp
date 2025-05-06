@@ -1,32 +1,34 @@
 #include "common.h"
 
 int recv_all(int sockfd, void *buffer, int len) {
-    char *buf_ptr = static_cast<char*>(buffer);
+    char *data = (char *)buffer;
     int total = 0;
     
-    do {
-        int rc = recv(sockfd, buf_ptr + total, len - total, 0);
+    while(total < len) {
+        int rc = recv(sockfd, data + total, len - total, 0);
         DIE(rc == -1, "receive failure");
         
-        if(rc == 0) return 0; // Connection closed by peer
+        if(rc == 0) 
+            return 0;
+        
         total += rc;
-    } while(total < len); // Continue until buffer is filled
+    }
 
     return total;
 }
 
 int send_all(int sockfd, void *buffer, int len) {
-    const char *data = static_cast<const char*>(buffer);
-    int transmitted = 0;
+    char *data = (char *)buffer;
+    int total = 0;
     
-    while(transmitted != len) {
-        int rc = send(sockfd, data + transmitted, len - transmitted, 0);
+    while(total < len) {
+        int rc = send(sockfd, data + total, len - total, 0);
         DIE(rc == -1, "transmission failure");
         
-        transmitted += rc;
+        total += rc;
     }
     
-    return transmitted;
+    return total;
 }
 
 // Parse a string into an array of arguments, similar to how main() receives argv
@@ -48,9 +50,23 @@ int string_to_argv(char *buf, char **argv) {
 void parse_input(const std::string& buff) {
     size_t pos = 0;
 
-    // Skip network metadata (source address information)
-    // UDP source IP (4 bytes) and port (2 bytes)
-    pos += sizeof(in_addr) + sizeof(uint16_t);
+    // Extract UDP client IP (4 bytes)
+    in_addr_t ip_addr;
+    memcpy(&ip_addr, buff.data() + pos, sizeof(in_addr_t));
+    pos += sizeof(in_addr_t);
+    
+    // Extract UDP client port (2 bytes)
+    uint16_t port;
+    memcpy(&port, buff.data() + pos, sizeof(uint16_t));
+    pos += sizeof(uint16_t);
+    
+    // Convert IP to string format
+    struct in_addr ip_struct;
+    ip_struct.s_addr = ip_addr;
+    std::string ip_str = inet_ntoa(ip_struct);
+    
+    // Format beginning of output string
+    std::string output = ip_str + ":" + std::to_string(ntohs(port)) + " - ";
 
     // Extract topic (fixed 50 byte field) and trim at first null character
     std::string topic = buff.substr(pos, 50);
@@ -66,6 +82,8 @@ void parse_input(const std::string& buff) {
     // Read message type byte (INT, SHORT_REAL, FLOAT, or STRING)
     unsigned char type = buff[pos++];
 
+    std::cout << output << topic;
+
     // Process message based on data type
     switch (type) {
         case INT: {
@@ -79,7 +97,7 @@ void parse_input(const std::string& buff) {
             int value = ntohl(net_value);
             if (sign) value = -value;
             
-            std::cout << topic << " - INT - " << value << "\n";
+            std::cout << " - INT - " << value << "\n";
             pos += sizeof(uint32_t);
             break;
         }
@@ -93,7 +111,7 @@ void parse_input(const std::string& buff) {
             memcpy(&net_value, buff.data() + pos, sizeof(uint16_t));
             float value = ntohs(net_value) / 100.0f;
             
-            std::cout << topic << " - SHORT_REAL - " 
+            std::cout << " - SHORT_REAL - " 
                       << std::fixed << std::setprecision(2) << value << "\n";
             pos += sizeof(uint16_t);
             break;
@@ -115,7 +133,7 @@ void parse_input(const std::string& buff) {
             value /= pow(10, exponent);
             
             // Display with appropriate precision based on exponent
-            std::cout << topic << " - FLOAT - " 
+            std::cout << " - FLOAT - " 
                       << std::fixed << std::setprecision(exponent) << value << "\n";
             break;
         }
@@ -126,10 +144,8 @@ void parse_input(const std::string& buff) {
             if (end == std::string::npos) end = buff.size();
             std::string payload = buff.substr(pos, end - pos);
             
-            std::cout << topic << " - STRING - " << payload << "\n";
+            std::cout << " - STRING - " << payload << "\n";
             break;
         }
-        default:
-            std::cerr << "Unknown data type\n";
     }
 }

@@ -1,8 +1,6 @@
 #ifndef SUBSCRIBER_H
 #define SUBSCRIBER_H
 
-#include <sys/select.h>   // For select() and fd_set
-
 #include "common.h"
 
 /**

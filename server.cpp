@@ -205,7 +205,6 @@ bool handle_server_command(ServerState& state, std::vector<struct pollfd>& poll_
         return true; // Signal to exit server loop
     }
     
-    std::cout << "Unknown command.\n";
     return false;
 }
 
@@ -322,10 +321,6 @@ void handle_client_request(int fd, tcp_request_t& request, ServerState& state,
             poll_fds.erase(poll_fds.begin() + index);
             break;
         }
-        
-        default:
-            std::cerr << "Unknown request type from fd " << fd << "\n";
-            break;
     }
 }
 
@@ -341,10 +336,7 @@ void handle_client_disconnect(int fd, ServerState& state, std::vector<struct pol
     }
     
     if (!client_id_to_mark.empty()) {
-        std::cout << "Client " << client_id_to_mark << " disconnected unexpectedly.\n";
         state.clients[client_id_to_mark]->connected = false;
-    } else {
-        std::cout << "Unknown client disconnected on fd " << fd << ".\n";
     }
     
     close(fd);
@@ -397,7 +389,7 @@ void server(int tcp_listen_fd, int udp_fd) {
                 // Handle TCP client request
                 tcp_request_t req;
                 int bytes = recv_all(pfd.fd, &req, sizeof(req));
-                
+
                 if (bytes == 0) {
                     // Client closed connection
                     handle_client_disconnect(pfd.fd, state, poll_set, idx);
@@ -453,7 +445,7 @@ void configure_socket(int& sock, int type, uint16_t port) {
 int main(int param_count, char* param_values[]) {
     // Check command-line arguments
     if (param_count != 2) {
-        fprintf(stderr, "Usage: %s <PORT>\n", param_values[0]);
+        std::cerr << "Usage: " << param_values[0] << " <PORT>\n";
         return EXIT_FAILURE;
     }
 
@@ -464,7 +456,7 @@ int main(int param_count, char* param_values[]) {
     char* end_ptr;
     const long port_num = strtol(param_values[1], &end_ptr, 10);
     if (*end_ptr != '\0' || port_num < 1024 || port_num > 65535) {
-        fprintf(stderr, "Invalid port number\n");
+        std::cerr << "Invalid port number\n";
         return EXIT_FAILURE;
     }
 
@@ -481,7 +473,7 @@ int main(int param_count, char* param_values[]) {
         close(tcp_sock);
         close(udp_sock);
     } catch (...) {
-        fprintf(stderr, "Runtime exception occurred\n");
+        std::cerr << "Runtime exception occurred\n";
         return EXIT_FAILURE;
     }
 

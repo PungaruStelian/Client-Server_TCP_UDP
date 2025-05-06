@@ -5,14 +5,13 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 #include <cmath>
-
+#include <vector>
+#include <poll.h>
 #include <iostream>
 #include <iomanip>
 

@@ -37,7 +37,6 @@ void handle_server_message(int sockfd, const char* id, bool& running) {
         
         // Special handling for server shutdown notification
         if (control_msg.message == SHUTDOWN) {
-            std::cout << "Server is shutting down. Closing connection.\n";
             running = false;
             return;
         }
@@ -69,7 +68,6 @@ bool process_user_command(const char* cmd, int argc, char** argv, int sockfd, co
     // Handle exit command - closes the client gracefully
     if (strcmp(cmd, "exit") == 0) {
         if (argc != 1) {
-            std::cout << "Usage: exit\n";
             return false;
         }
         
@@ -84,7 +82,6 @@ bool process_user_command(const char* cmd, int argc, char** argv, int sockfd, co
     // Handle subscribe command - adds client to a topic (with optional SF flag)
     if (strcmp(cmd, "subscribe") == 0) {
         if (argc < 2) {
-            std::cout << "Usage: subscribe <topic> [sf]\n";
             return false;
         }
         
@@ -96,14 +93,13 @@ bool process_user_command(const char* cmd, int argc, char** argv, int sockfd, co
         sub_req.subscribe.sf = (argc >= 3) ? atoi(argv[2]) : 0;  // Store-and-forward flag
         
         send_all(sockfd, &sub_req, sizeof(sub_req));
-        std::cout << "Subscribed to topic.\n";
+        std::cout << "Subscribed to topic" << argv[1] << "\n";
         return false;
     }
     
     // Handle unsubscribe command - removes client from a topic
     if (strcmp(cmd, "unsubscribe") == 0) {
         if (argc != 2) {
-            std::cout << "Usage: unsubscribe <topic>\n";
             return false;
         }
         
@@ -114,12 +110,9 @@ bool process_user_command(const char* cmd, int argc, char** argv, int sockfd, co
         strcpy(unsub_req.subscribe.topic, argv[1]);
         
         send_all(sockfd, &unsub_req, sizeof(unsub_req));
-        std::cout << "Unsubscribed from topic.\n";
+        std::cout << "Unsubscribed from topic" << argv[1] << "\n";
         return false;
     }
-    
-    // Command not recognized
-    std::cout << "Unknown command: " << cmd << "\n";
     return false;
 }
 
@@ -149,33 +142,38 @@ void subscriber(int sockfd, char* id) {
     // Register with the server first
     send_connect_message(sockfd, id);
     
-    // Set up I/O multiplexing to handle both stdin and socket
-    fd_set master_set, read_set;
-    FD_ZERO(&master_set);
-    FD_SET(STDIN_FILENO, &master_set);  // Monitor stdin for user commands
-    FD_SET(sockfd, &master_set);        // Monitor socket for server messages
-    int max_fd = (sockfd > STDIN_FILENO) ? sockfd : STDIN_FILENO;
+    // Set up I/O multiplexing with poll instead of select
+    std::vector<struct pollfd> poll_set;
+    
+    // Add file descriptors to monitor
+    poll_set.push_back({.fd = STDIN_FILENO, .events = POLLIN, .revents = 0});  // User input
+    poll_set.push_back({.fd = sockfd, .events = POLLIN, .revents = 0});        // Server messages
     
     // Main event loop
     bool running = true;
     while (running) {
-        // Create working copy of the file descriptor set
-        read_set = master_set;
-        
-        // Block until input arrives on one of the descriptors
-        int activity = select(max_fd + 1, &read_set, NULL, NULL, NULL);
-        if (activity < 0) {
-            break;  // Error in select
+        // Wait for activity on any monitored file descriptor
+        int active_fds = poll(poll_set.data(), poll_set.size(), -1);
+        if (active_fds < 0) {
+            break;  // Error in poll
         }
         
-        // Check for and process server messages
-        if (FD_ISSET(sockfd, &read_set)) {
-            handle_server_message(sockfd, id, running);
-        }
-        
-        // Check for and process user input
-        if (FD_ISSET(STDIN_FILENO, &read_set)) {
-            handle_user_input(sockfd, id, running);
+        // Process events on monitored descriptors
+        for (const auto& pfd : poll_set) {
+            // Skip if no relevant events
+            if (!(pfd.revents & POLLIN)) {
+                continue;
+            }
+            
+            // Process based on which descriptor had activity
+            if (pfd.fd == sockfd) {
+                // Server sent a message
+                handle_server_message(sockfd, id, running);
+            } 
+            else if (pfd.fd == STDIN_FILENO) {
+                // User typed a command
+                handle_user_input(sockfd, id, running);
+            }
         }
     }
 }
@@ -218,7 +216,7 @@ int establish_connection(const char* ip_address, uint16_t port) {
 int main(int arg_count, char* arg_values[]) {
     // Validate command line arguments
     if (arg_count != 4) {
-        fprintf(stderr, "Usage: %s CLIENT_ID SERVER_IP SERVER_PORT\n", arg_values[0]);
+        std::cerr << "Usage: " << arg_values[0] << " CLIENT_ID SERVER_IP SERVER_PORT\n";
         return EXIT_FAILURE;
     }
 
@@ -229,7 +227,7 @@ int main(int arg_count, char* arg_values[]) {
     char* validation_end;
     long numeric_port = strtol(arg_values[3], &validation_end, 10);
     if (*validation_end != '\0' || numeric_port < 1 || numeric_port > 65535) {
-        fprintf(stderr, "Invalid port number\n");
+        std::cerr << "Invalid port number\n";
         return EXIT_FAILURE;
     }
 

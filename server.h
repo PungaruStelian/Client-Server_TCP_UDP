@@ -1,25 +1,11 @@
 #ifndef SERVER_H
 #define SERVER_H
 
-#include <arpa/inet.h>      // for in_addr, inet_ntoa
-#include <netinet/in.h>     // for sockaddr_in
-#include <netinet/tcp.h>    // for TCP_NODELAY
-#include <poll.h>           // for poll, pollfd
-#include <sys/socket.h>     // for socket functions
-#include <unistd.h>         // for close, STDIN_FILENO
-
-#include <algorithm>        // for std::remove
-#include <iostream>         // for std::cout, std::cerr
-#include <map>              // for std::map
-#include <set>              // for std::set
-#include <string>           // for std::string
-#include <unordered_map>    // for std::unordered_map
-#include <vector>           // for std::vector
-
-#include <cstdlib>
-#include <cstdio>
-
 #include "common.h"
+
+#include <algorithm>
+#include <set>
+#include <unordered_map>
 
 struct stored_message_t {
     int c;
